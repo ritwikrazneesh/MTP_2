@@ -1,0 +1,7 @@
+torch
+torchvision
+open-clip-torch
+tqdm
+numpy
+pillow
+pyyaml

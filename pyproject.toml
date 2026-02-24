@@ -1,0 +1,36 @@
+remoteclip-dualprompt-fsl/
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+├── train_fewshot.py
+└── src/
+    └── rcdp/
+        ├── __init__.py
+        ├── backbones/
+        │   ├── __init__.py
+        │   └── remoteclip.py
+        ├── cli/
+        │   └── __init__.py
+        ├── data/
+        │   ├── __init__.py
+        │   ├── apply_transform.py
+        │   ├── datasets.py
+        │   ├── fewshot.py
+        │   ├── loaders.py
+        │   └── transforms.py
+        ├── models/
+        │   ├── __init__.py
+        │   ├── dualprompt.py
+        │   ├── layerwise_prefix_tokens.py
+        │   ├── openclip_patch.py
+        │   ├── prefix_kv.py
+        │   └── transformer_inject.py
+        ├── train/
+        │   ├── __init__.py
+        │   ├── loops.py
+        │   └── metrics.py
+        └── utils/
+            ├── __init__.py
+            ├── device.py
+            ├── labels.py
+            └── seed.py

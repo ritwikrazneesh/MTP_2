@@ -28,9 +28,26 @@ def train_fewshot(
     device: torch.device,
 ) -> Dict[str, float]:
     model = model.to(device)
+    
+    train_params = [p for p in model.trainable_parameters() if p.requires_grad]
+    if len(train_params) == 0 or cfg.epochs <= 0:
+        print("[train] No trainable parameters active (or epochs<=0). Running eval only.")
+        model.eval()
+        all_acc = []
+        for bi, (images, labels) in enumerate(test_loader):
+            if cfg.max_test_batches and bi >= cfg.max_test_batches:
+                break
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+            with torch.cuda.amp.autocast(enabled=(cfg.use_amp and device.type == "cuda")):
+                logits = model(images)
+            all_acc.append(accuracy_top1(logits, labels))
+        test_acc = float(sum(all_acc) / max(1, len(all_acc)))
+        return {"best_test_acc": test_acc}
+        
     model.train()
-
-    optim = torch.optim.AdamW(model.trainable_parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    
+    optim = torch.optim.AdamW(train_params, lr=cfg.lr, weight_decay=cfg.weight_decay)
     scaler = torch.cuda.amp.GradScaler(enabled=(cfg.use_amp and device.type == "cuda"))
 
     best_test = -1.0

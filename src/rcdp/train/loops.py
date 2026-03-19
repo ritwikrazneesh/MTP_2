@@ -1,5 +1,4 @@
-%%bash
-cat > /kaggle/working/MTP_2/src/rcdp/train/loops.py << 'EOF'
+
 from __future__ import annotations
 
 from dataclasses import dataclass

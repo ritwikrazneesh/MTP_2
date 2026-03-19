@@ -92,4 +92,4 @@ def train_fewshot(
         print(f"[epoch {epoch+1:03d}] test_acc={test_acc:.4f} best={best_test:.4f}")
 
     return {"best_test_acc": best_test}
-EOF
+

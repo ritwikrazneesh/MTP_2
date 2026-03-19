@@ -54,6 +54,8 @@ def parse_args() -> argparse.Namespace:
     # Output
     p.add_argument("--out_dir", type=str, default="./outputs")
     p.add_argument("--run_name", type=str, default="run")
+    p.add_argument("--eval_every", type=int, default=1, help="Evaluate every N epochs (0 disables eval during training)")
+    p.add_argument("--max_test_batches", type=int, default=0, help="Cap number of test batches per evaluation (0 = full test)")
 
     return p.parse_args()
 

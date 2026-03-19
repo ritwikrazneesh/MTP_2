@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 import torch.nn.functional as F
@@ -16,6 +16,8 @@ class TrainConfig:
     lr: float = 5e-3
     weight_decay: float = 1e-4
     use_amp: bool = True
+    eval_every: int = 1               # NEW
+    max_test_batches: int = 0         # NEW (0 = no limit)
 
 
 def train_fewshot(
@@ -60,10 +62,15 @@ def train_fewshot(
             n_batches += 1
             pbar.set_postfix(loss=total_loss / n_batches, acc=total_acc / n_batches)
 
-        # ---- eval ----
+        # ---- eval (only sometimes) ----
+        if (epoch + 1) % cfg.eval_every != 0:
+            continue
+
         model.eval()
         all_acc = []
-        for images, labels in test_loader:
+        for bi, (images, labels) in enumerate(test_loader):
+            if cfg.max_test_batches and bi >= cfg.max_test_batches:
+                break
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
             with torch.cuda.amp.autocast(enabled=(cfg.use_amp and device.type == "cuda")):

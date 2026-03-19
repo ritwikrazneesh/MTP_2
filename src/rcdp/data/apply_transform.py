@@ -10,6 +10,14 @@ class TransformDataset(Dataset):
         self.base = base
         self.transform = transform
 
+        # Proxy common ImageFolder attributes (so few-shot split logic works)
+        if hasattr(base, "targets"):
+            self.targets = base.targets  # type: ignore[attr-defined]
+        if hasattr(base, "classes"):
+            self.classes = base.classes  # type: ignore[attr-defined]
+        if hasattr(base, "class_to_idx"):
+            self.class_to_idx = base.class_to_idx  # type: ignore[attr-defined]
+
     def __len__(self) -> int:
         return len(self.base)
 

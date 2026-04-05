@@ -24,17 +24,23 @@ class TrainConfig:
 @torch.no_grad()
 def _eval(model, test_loader, cfg: TrainConfig, device: torch.device) -> float:
     model.eval()
-    accs = []
+    correct = 0
+    total = 0
+
     for bi, (images, labels) in enumerate(test_loader):
         if cfg.max_test_batches and bi >= cfg.max_test_batches:
             break
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
+
         with torch.cuda.amp.autocast(enabled=(cfg.use_amp and device.type == "cuda")):
             logits = model(images)
-        accs.append(accuracy_top1(logits, labels))
-    return float(sum(accs) / max(1, len(accs)))
 
+        preds = logits.argmax(dim=1)
+        correct += int((preds == labels).sum().item())
+        total += int(labels.numel())
+
+    return float(correct / max(1, total))
 
 def train_fewshot(
     model,
@@ -82,6 +88,11 @@ def train_fewshot(
             n_batches += 1
             pbar.set_postfix(loss=total_loss / n_batches, acc=total_acc / n_batches)
 
+        # NEW: epoch-level train summary print
+        train_loss = total_loss / max(1, n_batches)
+        train_acc = total_acc / max(1, n_batches)
+        print(f"[epoch {epoch+1:03d}] train_loss={train_loss:.4f} train_acc={train_acc:.4f}")
+        
         if cfg.eval_every <= 0:
             continue
         if (epoch + 1) % cfg.eval_every != 0:

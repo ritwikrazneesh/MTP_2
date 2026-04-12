@@ -119,15 +119,20 @@ class RemoteCLIPDualPromptModel(nn.Module):
         return feats
 
     def encode_text_all_classes(self) -> torch.Tensor:
-        # Compute text features for all classes with E routing.
-        feats = []
-        for c in range(self.num_classes):
-            self.text_prefix._rcdp_class_idx = c
-            tokens = self.tokenized_prompts[c : c + 1].to(self.device)
-            t = self.model.encode_text(tokens)
-            t = t / t.norm(dim=-1, keepdim=True)
-            feats.append(t.squeeze(0))
-        return torch.stack(feats, dim=0)  # [C,D]
+        """
+        Compute text features for all classes in ONE batched text-encoder forward.
+
+        Routing:
+          - _rcdp_class_idx is a LongTensor[C] mapping each row in the text batch to its class id.
+        """
+        C = self.num_classes
+        class_idx = torch.arange(C, device=self.device, dtype=torch.long)
+        self.text_prefix._rcdp_class_idx = class_idx
+
+        tokens = self.tokenized_prompts.to(self.device)  # [C, ctx_len]
+        t = self.model.encode_text(tokens)               # ONE forward -> [C, D]
+        t = t / t.norm(dim=-1, keepdim=True)
+        return t
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         """

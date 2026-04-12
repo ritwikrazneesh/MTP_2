@@ -148,10 +148,13 @@ def main() -> None:
     os.makedirs(run_dir, exist_ok=True)
 
     ckpt_path = os.path.join(run_dir, "dualprompt_prefix.pt")
+    # Save best state if training returned it, else fall back to current model state.
+    state_to_save = results.get("best_state_dict") or model.state_dict()
+
     torch.save({
         "dualprompt_config": asdict(dp_cfg),
         "classnames": classnames,
-        "state_dict": model.state_dict(),
+        "state_dict": state_to_save,
     }, ckpt_path)
 
     res_path = os.path.join(run_dir, "results.json")

@@ -12,6 +12,35 @@ def _get_blocks(transformer: nn.Module):
     raise RuntimeError("Unsupported transformer: expected .resblocks or .blocks")
 
 
+def _expand_attn_mask(attn_mask: torch.Tensor, new_len: int, prefix_len: int) -> torch.Tensor:
+    """
+    Expand a square attention mask from [T,T] to [T+P, T+P] by padding.
+
+    Strategy:
+      - Put old mask into bottom-right (original tokens attending to original tokens).
+      - Prefix tokens: allow attending to everything (set to 0 / unmasked).
+      - Original tokens attending to prefix: allow (set to 0 / unmasked).
+
+    This is the most permissive + stable choice and avoids shape errors.
+    """
+    if attn_mask.dim() != 2 or attn_mask.shape[0] != attn_mask.shape[1]:
+        # If OpenCLIP ever passes a different mask shape, fail fast.
+        raise RuntimeError(f"Unsupported attn_mask shape: {tuple(attn_mask.shape)}")
+
+    old_len = attn_mask.shape[0]
+    if old_len == new_len:
+        return attn_mask
+    if new_len < old_len:
+        raise RuntimeError(f"new_len ({new_len}) < old_len ({old_len}) not supported")
+
+    # new mask
+    new_mask = attn_mask.new_zeros((new_len, new_len))
+
+    # bottom-right: old mask
+    new_mask[prefix_len:prefix_len + old_len, prefix_len:prefix_len + old_len] = attn_mask
+    return new_mask
+
+
 def inject_layerwise_prefix(
     transformer: nn.Module,
     prefix_module: nn.Module,
@@ -19,7 +48,7 @@ def inject_layerwise_prefix(
     get_prefix,  # callable(layer_idx, batch_class_idx) -> [B,P,D] or None
 ) -> None:
     """
-    Stable injection (no heuristics).
+    Stable injection (no heuristics) + attn_mask expansion.
 
     Requires:
       - prefix_module._rcdp_class_idx is set to LongTensor[B] before encode
@@ -55,6 +84,24 @@ def inject_layerwise_prefix(
                 D = x.shape[-1]
                 if Dp != D:
                     raise RuntimeError(f"Prefix dim {Dp} != token dim {D}")
+
+                # If an attention mask is provided, expand it to match new sequence length.
+                # OpenCLIP text transformer uses attn_mask with shape [T,T] (causal mask).
+                if "attn_mask" in kwargs and kwargs["attn_mask"] is not None:
+                    am = kwargs["attn_mask"]
+                    if isinstance(am, torch.Tensor) and am.dim() == 2:
+                        # Determine old/new lengths based on x layout
+                        if x.shape[0] == B:
+                            # x is [B,T,D]
+                            old_len = x.shape[1]
+                        elif x.shape[1] == B:
+                            # x is [T,B,D]
+                            old_len = x.shape[0]
+                        else:
+                            raise RuntimeError(f"Cannot determine layout for attn_mask expansion: x={tuple(x.shape)}, pref={tuple(pref.shape)}")
+
+                        new_len = old_len + P
+                        kwargs["attn_mask"] = _expand_attn_mask(am, new_len=new_len, prefix_len=P)
 
                 # Decide layout by matching B
                 if x.shape[0] == B:

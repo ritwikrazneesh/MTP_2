@@ -112,23 +112,24 @@ class RemoteCLIPDualPromptModel(nn.Module):
         return list(self.text_prefix.parameters()) + list(self.vision_prefix.parameters())
 
     def encode_image(self, images: torch.Tensor) -> torch.Tensor:
-        # G-only, class-agnostic
-        self.vision_prefix._rcdp_class_idx = None
-        feats = self.model.encode_image(images)
-        feats = feats / feats.norm(dim=-1, keepdim=True)
-        return feats
+        # Stable routing: always provide a LongTensor[B].
+        # Vision uses G-only because vision_prefix.cfg.e_layers == 0,
+        # so the actual values do not matter.
+        B = int(images.shape[0])
+        self.vision_prefix._rcdp_class_idx = torch.zeros(B, device=images.device, dtype=torch.long)
+
+    feats = self.model.encode_image(images)
+    feats = feats / feats.norm(dim=-1, keepdim=True)
+    return feats
 
     def encode_text_all_classes(self) -> torch.Tensor:
         """
         Compute text features for all classes in ONE batched text-encoder forward.
-
-        Routing:
-          - _rcdp_class_idx is a LongTensor[C] mapping each row in the text batch to its class id.
         """
         C = self.num_classes
         class_idx = torch.arange(C, device=self.device, dtype=torch.long)
         self.text_prefix._rcdp_class_idx = class_idx
-
+    
         tokens = self.tokenized_prompts.to(self.device)  # [C, ctx_len]
         t = self.model.encode_text(tokens)               # ONE forward -> [C, D]
         t = t / t.norm(dim=-1, keepdim=True)

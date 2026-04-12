@@ -118,9 +118,9 @@ class RemoteCLIPDualPromptModel(nn.Module):
         B = int(images.shape[0])
         self.vision_prefix._rcdp_class_idx = torch.zeros(B, device=images.device, dtype=torch.long)
 
-    feats = self.model.encode_image(images)
-    feats = feats / feats.norm(dim=-1, keepdim=True)
-    return feats
+        feats = self.model.encode_image(images)
+        feats = feats / feats.norm(dim=-1, keepdim=True)
+        return feats
 
     def encode_text_all_classes(self) -> torch.Tensor:
         """

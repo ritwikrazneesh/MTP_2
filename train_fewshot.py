@@ -82,14 +82,34 @@ def main() -> None:
 
     # --- transforms ---
     tfm = build_transforms(bundle.preprocess_train, bundle.preprocess_val)
-    dataset_trainable = TransformDataset(dataset, transform=tfm.train)  # we will split after transform wrapper
 
-    # We need targets from original dataset; indices still align
-    train_loader, test_loader, split = build_fewshot_loaders(
-        dataset_trainable,
-        k_shot=args.k_shot,
-        seed=args.seed,
-        cfg=LoaderConfig(batch_size=args.batch_size, num_workers=args.num_workers),
+    # IMPORTANT: split first, then apply transforms separately
+    from rcdp.data.fewshot import make_fewshot_split, subset_from_split
+    from torch.utils.data import DataLoader
+
+    split = make_fewshot_split(dataset.targets, k_shot=args.k_shot, seed=args.seed)
+    train_subset, test_subset = subset_from_split(dataset, split)
+
+    train_ds = TransformDataset(train_subset, transform=tfm.train)
+    test_ds = TransformDataset(test_subset, transform=tfm.test)
+
+    loader_cfg = LoaderConfig(batch_size=args.batch_size, num_workers=args.num_workers)
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=loader_cfg.batch_size,
+        shuffle=True,
+        num_workers=loader_cfg.num_workers,
+        pin_memory=loader_cfg.pin_memory and torch.cuda.is_available(),
+        drop_last=loader_cfg.drop_last,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=loader_cfg.batch_size,
+        shuffle=False,
+        num_workers=loader_cfg.num_workers,
+        pin_memory=loader_cfg.pin_memory and torch.cuda.is_available(),
+        drop_last=False,
     )
 
     print("[split]\n" + describe_split(dataset, split, classnames_raw))

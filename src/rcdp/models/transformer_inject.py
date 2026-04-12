@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 import torch
 import torch.nn as nn
 
@@ -18,17 +16,16 @@ def inject_layerwise_prefix(
     transformer: nn.Module,
     prefix_module: nn.Module,
     *,
-    get_prefix,  # callable(layer_idx, class_idx_tensor_or_none) -> [P,D] or [B,P,D] or None
+    get_prefix,  # callable(layer_idx, batch_class_idx) -> [B,P,D] or None
 ) -> None:
     """
-    Patches each block.forward to:
-      - prepend prefix tokens for selected layers
-      - run original forward
-      - remove prefix tokens (so shape stays same as original)
+    Stable injection (no heuristics).
 
-    Supports:
-      - x: [T,B,D] or [B,T,D]
-      - pref: [P,D] (shared) or [B,P,D] (per-sample)
+    Requires:
+      - prefix_module._rcdp_class_idx is set to LongTensor[B] before encode
+      - get_prefix returns either None or [B,P,D]
+      - x is [T,B,D] or [B,T,D]
+    Layout is determined ONLY by matching B.
     """
     blocks = _get_blocks(transformer)
 
@@ -39,56 +36,40 @@ def inject_layerwise_prefix(
 
         def make_forward(orig_fwd, this_layer_idx: int):
             def forward_patched(x, *args, **kwargs):
-                class_idx = getattr(prefix_module, "_rcdp_class_idx", None)
-                pref = get_prefix(this_layer_idx, class_idx)
+                batch_class_idx = getattr(prefix_module, "_rcdp_class_idx", None)
+                if batch_class_idx is None:
+                    raise RuntimeError(
+                        "prefix_module._rcdp_class_idx must be set to LongTensor[B] before calling encoder."
+                    )
 
+                pref = get_prefix(this_layer_idx, batch_class_idx)
                 if pref is None:
                     return orig_fwd(x, *args, **kwargs)
 
                 if x.dim() != 3:
-                    raise RuntimeError(f"Expected x to be 3D [T,B,D] or [B,T,D], got {x.shape}")
+                    raise RuntimeError(f"Expected x to be 3D, got {x.shape}")
+                if pref.dim() != 3:
+                    raise RuntimeError(f"Expected pref to be [B,P,D], got {pref.shape}")
 
+                B, P, Dp = pref.shape
                 D = x.shape[-1]
-                if pref.shape[-1] != D:
-                    raise RuntimeError(f"Prefix dim {pref.shape[-1]} != token dim {D}")
+                if Dp != D:
+                    raise RuntimeError(f"Prefix dim {Dp} != token dim {D}")
 
-                # Case 1: x is [T,B,D]
-                if x.shape[0] != x.shape[1]:
-                    T, B, _ = x.shape
-
-                    if pref.dim() == 2:
-                        # [P,D] -> [P,B,D]
-                        pref_tb = pref.unsqueeze(1).expand(-1, B, -1)
-                        P = pref.shape[0]
-                    elif pref.dim() == 3:
-                        # [B,P,D] -> [P,B,D]
-                        if pref.shape[0] != B:
-                            raise RuntimeError(f"Batch mismatch: x has B={B} but pref has {pref.shape}")
-                        pref_tb = pref.permute(1, 0, 2).contiguous()
-                        P = pref.shape[1]
-                    else:
-                        raise RuntimeError(f"Unsupported pref shape: {pref.shape}")
-
+                # Decide layout by matching B
+                if x.shape[0] == B:
+                    # x: [B,T,D]
+                    x2 = torch.cat([pref, x], dim=1)  # [B,P+T,D]
+                    y2 = orig_fwd(x2, *args, **kwargs)
+                    return y2[:, P:, :]
+                elif x.shape[1] == B:
+                    # x: [T,B,D]
+                    pref_tb = pref.permute(1, 0, 2).contiguous()  # [P,B,D]
                     x2 = torch.cat([pref_tb, x], dim=0)  # [P+T,B,D]
                     y2 = orig_fwd(x2, *args, **kwargs)
                     return y2[P:, :, :]
-
-                # Case 2: x is [B,T,D]
-                B, T, _ = x.shape
-                if pref.dim() == 2:
-                    pref_bt = pref.unsqueeze(0).expand(B, -1, -1)  # [B,P,D]
-                    P = pref.shape[0]
-                elif pref.dim() == 3:
-                    if pref.shape[0] != B:
-                        raise RuntimeError(f"Batch mismatch: x has B={B} but pref has {pref.shape}")
-                    pref_bt = pref
-                    P = pref.shape[1]
                 else:
-                    raise RuntimeError(f"Unsupported pref shape: {pref.shape}")
-
-                x2 = torch.cat([pref_bt, x], dim=1)  # [B,P+T,D]
-                y2 = orig_fwd(x2, *args, **kwargs)
-                return y2[:, P:, :]
+                    raise RuntimeError(f"Cannot determine layout: x={tuple(x.shape)}, pref={tuple(pref.shape)}")
 
             return forward_patched
 

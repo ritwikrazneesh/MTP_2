@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -19,19 +19,19 @@ class LayerwisePrefixConfig:
 
 class LayerwisePrefixTokens(nn.Module):
     """
-    Implements DualPrompt-like:
+    DualPrompt-like prefix tokens:
       - G prompt tokens injected for first g_layers
       - E prompt tokens injected for last e_layers
 
-    Injection mechanism:
-      for a given transformer block input sequence x: [T, B, D] or [B, T, D]
-      we concatenate prefix tokens along T dimension:
-         x' = cat([prefix, x], dim=T)
+    Supports batched routing:
+      - class_idx is None                 -> no E prompt (G-only possible)
+      - class_idx is Tensor[B] (long)     -> per-sample E prompts
 
-    We then remove the prefix tokens after the block to keep sequence length stable.
-
-    This requires patching each residual block forward with a wrapper.
+    Returned prefix shapes:
+      - if class_idx is None: [P_total, D]
+      - if class_idx is Tensor[B]: [B, P_total, D]
     """
+
     def __init__(self, cfg: LayerwisePrefixConfig, num_classes: int, device: Optional[torch.device] = None):
         super().__init__()
         self.cfg = cfg
@@ -43,26 +43,54 @@ class LayerwisePrefixTokens(nn.Module):
         # E: [C, L, P, D]
         self.e = nn.Parameter(torch.randn(num_classes, cfg.n_layers, cfg.prefix_len, cfg.width, device=device) * cfg.init_std)
 
-    def prefix_for_layer(self, layer_idx: int, class_idx: Optional[int]) -> Optional[torch.Tensor]:
+        # Routing signal (set by model before encode_* calls)
+        # None OR LongTensor[B]
+        self._rcdp_class_idx: Optional[torch.Tensor] = None
+
+    def prefix_for_layer(self, layer_idx: int, class_idx: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
         """
-        Returns prefix tokens [P, D] for this layer, already combined:
-          - if layer is in G range -> include G
-          - if layer is in E range -> include E[class]
-        If both apply, we concatenate: [P_g + P_e, D]
+        Returns prefix tokens for this layer, already combined (G then E).
+
+        If class_idx is:
+          - None: returns [P_total, D] or None
+          - Tensor[B]: returns [B, P_total, D] or None
         """
-        P = self.cfg.prefix_len
         out = []
 
         # G layers: [0, g_layers)
         if layer_idx < self.cfg.g_layers:
-            out.append(self.g[layer_idx])
+            g = self.g[layer_idx]  # [P, D]
+            out.append(g)
 
         # E layers: [n_layers - e_layers, n_layers)
-        if layer_idx >= (self.cfg.n_layers - self.cfg.e_layers):
+        use_e = layer_idx >= (self.cfg.n_layers - self.cfg.e_layers)
+        if use_e:
             if class_idx is None:
-                raise ValueError("class_idx must be provided for E-prompt layers")
-            out.append(self.e[class_idx, layer_idx])
+                raise ValueError("class_idx must be provided for E-prompt layers (use None only for G-only encoders).")
+            if class_idx.dtype != torch.long:
+                class_idx = class_idx.long()
+
+            # Gather E for each sample in batch: [B, P, D]
+            e = self.e[class_idx, layer_idx]  # advanced indexing
+            out.append(e)
 
         if not out:
             return None
-        return torch.cat(out, dim=0)  # [P_total, D]
+
+        # Combine G + E
+        if class_idx is None:
+            # Only possible tensors in out are [P,D]
+            return torch.cat(out, dim=0)  # [P_total, D]
+
+        # class_idx is Tensor[B], ensure all parts are [B,P,D]
+        B = int(class_idx.shape[0])
+        parts = []
+        for t in out:
+            if t.dim() == 2:
+                # [P,D] -> [B,P,D]
+                parts.append(t.unsqueeze(0).expand(B, -1, -1))
+            elif t.dim() == 3:
+                parts.append(t)
+            else:
+                raise RuntimeError(f"Unexpected prefix tensor dim: {t.shape}")
+        return torch.cat(parts, dim=1)  # [B, P_total, D]

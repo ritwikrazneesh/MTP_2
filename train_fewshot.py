@@ -139,8 +139,13 @@ def main() -> None:
             lr=args.lr,
             weight_decay=args.weight_decay,
             use_amp=(not args.no_amp),
+            eval_every=args.eval_every,
+            max_test_batches=args.max_test_batches,
+            # You can enable clamp if you want:
+            # prompt_norm_max=1.0,
         ),
         device=device,
+        seed=args.seed,
     )
 
     # --- save ---

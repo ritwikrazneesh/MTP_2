@@ -108,6 +108,20 @@ class RemoteCLIPDualPromptModel(nn.Module):
         tokenized = self.tokenizer(prompts)
         self.register_buffer("tokenized_prompts", tokenized)
 
+    def train(self, mode: bool = True):
+        """
+        Train prompts, keep backbone frozen + deterministic.
+
+        - RemoteCLIP backbone should always run in eval mode (no dropout / training-time behavior).
+        - Prompt modules still follow the requested mode.
+        """
+        super().train(mode)
+
+        # Force backbone to eval always
+        self.model.eval()
+
+        return self
+    
     def trainable_parameters(self):
         return list(self.text_prefix.parameters()) + list(self.vision_prefix.parameters())
 

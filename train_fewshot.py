@@ -163,10 +163,16 @@ def main() -> None:
     }, ckpt_path)
 
     res_path = os.path.join(run_dir, "results.json")
+
+    # Make results JSON-serializable (remove tensors)
+    results_json = dict(results)
+    if "best_state_dict" in results_json:
+        results_json["best_state_dict"] = None  # store nothing / or store a string flag
+    
     payload: Dict = {
         "args": vars(args),
         "dualprompt_config": asdict(dp_cfg),
-        "results": results,
+        "results": results_json,
         "checkpoint": ckpt_path,
     }
     with open(res_path, "w") as f:

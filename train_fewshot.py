@@ -18,6 +18,7 @@ from rcdp.train.loops import TrainConfig, train_fewshot
 from rcdp.utils.device import get_device
 from rcdp.utils.labels import canonicalize_classname
 from rcdp.utils.seed import SeedConfig, seed_everything
+from rcdp.train.linear_probe import LinearProbeConfig, train_linearprobe
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +63,17 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="If >0, evaluate on a stratified subset with this many test samples per class (overrides --max_test_batches during eval).",
     )
+    p.add_argument(
+        "--method",
+        type=str,
+        default="dualprompt",
+        choices=["dualprompt", "linearprobe"],
+        help="Training method: dualprompt (default) or linearprobe (RemoteCLIP + linear head).",
+    )
+    p.add_argument("--lp_epochs", type=int, default=200)
+    p.add_argument("--lp_lr", type=float, default=1e-2)
+    p.add_argument("--lp_weight_decay", type=float, default=0.0)
+    p.add_argument("--lp_eval_every", type=int, default=10)
 
     return p.parse_args()
 

@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--run_name", type=str, default="run")
     p.add_argument("--eval_every", type=int, default=1, help="Evaluate every N epochs (0 disables eval during training)")
     p.add_argument("--max_test_batches", type=int, default=0, help="Cap number of test batches per evaluation (0 = full test)")
+    p.add_argument(
+        "--eval_per_class",
+        type=int,
+        default=0,
+        help="If >0, evaluate on a stratified subset with this many test samples per class (overrides --max_test_batches during eval).",
+    )
 
     return p.parse_args()
 
@@ -141,6 +147,7 @@ def main() -> None:
             use_amp=(not args.no_amp),
             eval_every=args.eval_every,
             max_test_batches=args.max_test_batches,
+            eval_per_class=args.eval_per_class,
             # You can enable clamp if you want:
             # prompt_norm_max=1.0,
         ),

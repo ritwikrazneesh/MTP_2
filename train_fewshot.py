@@ -136,6 +136,47 @@ def main() -> None:
 
     print("[split]\n" + describe_split(dataset, split, classnames_raw))
 
+    if args.method == "linearprobe":
+        results = train_linearprobe(
+            backbone=bundle.model,
+            train_loader=train_loader,
+            test_loader=test_loader,
+            num_classes=len(classnames),
+            cfg=LinearProbeConfig(
+                epochs=args.lp_epochs,
+                lr=args.lp_lr,
+                weight_decay=args.lp_weight_decay,
+                use_amp=(not args.no_amp),
+                eval_every=args.lp_eval_every,
+            ),
+            device=device,
+        )
+
+        head_path = os.path.join(run_dir, "linear_head.pt")
+        torch.save(
+            {
+                "num_classes": len(classnames),
+                "classnames": classnames,
+                "head_state_dict": results["head_state_dict"],
+                "in_dim": results["in_dim"],
+            },
+            head_path,
+        )
+
+        res_path = os.path.join(run_dir, "results.json")
+        payload: Dict = {
+            "args": vars(args),
+            "results": {"best_test_acc": results["best_test_acc"]},
+            "head_checkpoint": head_path,
+        }
+        with open(res_path, "w") as f:
+            json.dump(payload, f, indent=2)
+
+        print(f"[done] saved linear head: {head_path}")
+        print(f"[done] saved results:     {res_path}")
+        print(f"[done] best_test_acc:     {results['best_test_acc']:.4f}")
+        return
+    
     # --- model ---
     dp_cfg = DualPromptConfig(
         template=args.template,

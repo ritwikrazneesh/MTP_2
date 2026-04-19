@@ -73,6 +73,10 @@ def main() -> None:
     device = get_device(args.device)
     os.makedirs(args.out_dir, exist_ok=True)
 
+    run_dir = os.path.join(args.out_dir, args.run_name)
+    os.makedirs(run_dir, exist_ok=True)
+    ckpt_path = os.path.join(run_dir, "dualprompt_prefix.pt")
+
     # --- load backbone ---
     bundle = load_remoteclip(RemoteCLIPConfig(
         model_name=args.model_name,
@@ -135,6 +139,16 @@ def main() -> None:
         device=device,
     ).to(device)
 
+    # --- load existing checkpoint if present ---
+    if os.path.isfile(ckpt_path):
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        missing, unexpected = model.load_state_dict(ckpt["state_dict"], strict=False)
+        print(f"[ckpt] loaded: {ckpt_path}")
+        if missing:
+            print(f"[ckpt] missing keys: {missing}")
+        if unexpected:
+            print(f"[ckpt] unexpected keys: {unexpected}")
+    
     # --- train ---
     results = train_fewshot(
         model=model,
@@ -156,10 +170,7 @@ def main() -> None:
     )
 
     # --- save ---
-    run_dir = os.path.join(args.out_dir, args.run_name)
-    os.makedirs(run_dir, exist_ok=True)
-
-    ckpt_path = os.path.join(run_dir, "dualprompt_prefix.pt")
+    
     # Save best state if training returned it, else fall back to current model state.
     state_to_save = results.get("best_state_dict") or model.state_dict()
 

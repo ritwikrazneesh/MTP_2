@@ -11,6 +11,79 @@ from tqdm import tqdm
 
 from .metrics import accuracy_top1
 
+def _unwrap_subset_and_targets(ds):
+    """
+    Supports your test dataset structure:
+      ds = TransformDataset( base = Subset(ImageFolder, indices), transform=tfm.test)
+
+    Returns:
+      subset_indices: List[int]  (indices into the original ImageFolder)
+      targets_full:   Sequence[int] (ImageFolder targets)
+    """
+    # TransformDataset
+    base = getattr(ds, "base", None)
+    if base is None:
+        raise RuntimeError("Expected TransformDataset with .base for stratified eval.")
+
+    # torch.utils.data.Subset
+    subset_indices = getattr(base, "indices", None)
+    subset_dataset = getattr(base, "dataset", None)
+    if subset_indices is None or subset_dataset is None:
+        raise RuntimeError("Expected TransformDataset.base to be a torch.utils.data.Subset for stratified eval.")
+
+    targets_full = getattr(subset_dataset, "targets", None)
+    if targets_full is None:
+        raise RuntimeError("Underlying dataset has no .targets; cannot do stratified eval.")
+
+    return list(subset_indices), targets_full
+
+
+
+
+def _make_eval_loader_stratified(test_loader: DataLoader, per_class: int, seed: int) -> DataLoader:
+    """
+    Build a deterministic stratified subset loader from the existing test_loader.
+
+    We sample `per_class` items per class from the *test split only*.
+    """
+    ds = test_loader.dataset
+    bs = int(test_loader.batch_size or 1)
+
+    subset_indices, targets_full = _unwrap_subset_and_targets(ds)
+
+    # Map: class -> list of local positions in the test subset
+    # local position i corresponds to ds[i] which maps to original index subset_indices[i]
+    class_to_local = {}
+    for local_i, orig_i in enumerate(subset_indices):
+        y = int(targets_full[orig_i])
+        class_to_local.setdefault(y, []).append(local_i)
+
+    rng = np.random.default_rng(seed)
+
+    chosen_local = []
+    for y, locals_list in sorted(class_to_local.items()):
+        if len(locals_list) == 0:
+            continue
+        k = min(per_class, len(locals_list))
+        pick = rng.choice(locals_list, size=k, replace=False).tolist()
+        chosen_local.extend(pick)
+
+    # deterministic order (optional)
+    chosen_local = sorted(chosen_local)
+
+    sub = Subset(ds, chosen_local)
+
+    return DataLoader(
+        sub,
+        batch_size=bs,
+        shuffle=False,
+        num_workers=test_loader.num_workers,
+        pin_memory=test_loader.pin_memory,
+        drop_last=False,
+    )
+
+
+
 
 @dataclass(frozen=True)
 class TrainConfig:
@@ -20,7 +93,7 @@ class TrainConfig:
     use_amp: bool = True
     eval_every: int = 1
     max_test_batches: int = 0  # 0 = full test
-
+    eval_per_class: int = 0  # 0 disables stratified eval
     # Regularization knobs (safe defaults: disabled)
     prompt_norm_max: float = 0.0  # 0 disables norm clamp
 
@@ -56,8 +129,16 @@ def _make_eval_loader_if_capped(test_loader: DataLoader, max_batches: int, seed:
 def _eval(model, test_loader: DataLoader, cfg: TrainConfig, device: torch.device, *, seed: int) -> float:
     model.eval()
 
-    # Use random subset loader if capped
-    eval_loader = _make_eval_loader_if_capped(test_loader, cfg.max_test_batches, seed=seed)
+    # Precedence:
+    # 1) eval_per_class (stratified)
+    # 2) max_test_batches (random subset)
+    # 3) full test
+    if cfg.eval_per_class and cfg.eval_per_class > 0:
+        if cfg.max_test_batches and cfg.max_test_batches > 0:
+            print("[eval] NOTE: --eval_per_class is set, ignoring --max_test_batches for evaluation.")
+        eval_loader = _make_eval_loader_stratified(test_loader, per_class=cfg.eval_per_class, seed=seed)
+    else:
+        eval_loader = _make_eval_loader_if_capped(test_loader, cfg.max_test_batches, seed=seed)
 
     correct = 0
     total = 0

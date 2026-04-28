@@ -192,10 +192,16 @@ def main() -> None:
         device=device,
     ).to(device)
 
+
+    if torch.cuda.device_count() > 1:
+        print(f"[multi-gpu] Using DataParallel on {torch.cuda.device_count()} GPUs")
+        model = torch.nn.DataParallel(model)
+
     # --- load existing checkpoint if present ---
     if os.path.isfile(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location="cpu")
-        missing, unexpected = model.load_state_dict(ckpt["state_dict"], strict=False)
+        target = model.module if isinstance(model, torch.nn.DataParallel) else model
+        missing, unexpected = target.load_state_dict(ckpt["state_dict"], strict=False)
         print(f"[ckpt] loaded: {ckpt_path}")
         if missing:
             print(f"[ckpt] missing keys: {missing}")
@@ -225,7 +231,8 @@ def main() -> None:
     # --- save ---
     
     # Save best state if training returned it, else fall back to current model state.
-    state_to_save = results.get("best_state_dict") or model.state_dict()
+    target = model.module if isinstance(model, torch.nn.DataParallel) else model
+    state_to_save = results.get("best_state_dict") or target.state_dict()
 
     torch.save({
         "dualprompt_config": asdict(dp_cfg),
